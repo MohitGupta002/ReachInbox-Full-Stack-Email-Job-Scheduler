@@ -72,25 +72,37 @@ This entire system is implemented in **vanilla JavaScript (Node.js + Express.js 
 
 - **Backend:** Node.js, Express.js, BullMQ, ioredis, Sequelize, PostgreSQL 16 / SQLite, Elasticsearch 8, Nodemailer, Passport.js, JWT.
 - **Frontend:** React 18, Vite, Tailwind CSS, PapaParse, Lucide React, React Hot Toast.
-- **Infrastructure:** Docker Compose (PostgreSQL, Redis AOF, Elasticsearch).
+- **Infrastructure & Containers:** Full 6-service Docker Compose stack (`postgres:16-alpine`, `redis:7-alpine` with AOF+RDB, `elasticsearch:8.15.0`, containerized Express API, containerized BullMQ Worker, and Nginx-served Vite React SPA via `backend/Dockerfile` & `frontend/Dockerfile`).
 
 ---
 
 ## 📦 Getting Started
 
-### 1. Prerequisites
+### Option A — Full-Stack 1-Command Docker Launch (Recommended)
+Run **everything** (PostgreSQL 16, Redis 7 AOF+RDB, Elasticsearch 8, Express API, BullMQ Worker, and Nginx React Frontend) inside Docker containers:
+```bash
+cp .env.example .env
+# (Optional) Add your GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET in .env
+docker compose up -d --build
+```
+- **Frontend Dashboard:** `http://localhost:5173` (Nginx serves React SPA and proxies `/api` & `/admin/queues` to `api:5000`)
+- **Backend API & Bull Board:** `http://localhost:5000` & `http://localhost:5000/admin/queues`
+- **Container Health Check:** `docker compose ps`
+
+### Option B — Hybrid Setup (Docker Databases + Local Node.js Dev)
+#### 1. Prerequisites
 - **Node.js v18+** (tested on Node v24)
 - **Docker & Docker Compose** (optional — automatic resilient SQLite + standalone dispatcher fallback included)
 - **Google OAuth 2.0 Credentials** (Client ID & Client Secret from Google Cloud Console)
 - *(Optional)* **Slack App / Incoming Webhook URL** for hourly rate-limit alerts
 
-### 2. Infrastructure Setup (Docker)
+#### 2. Infrastructure Services in Docker
 ```bash
-docker-compose up -d
+docker compose up -d postgres redis elasticsearch
 ```
 *Starts PostgreSQL 16 (port 5432), Redis 7 with AOF+RDB persistence (port 6379), and Elasticsearch 8 (port 9200).*
 
-### 3. Environment Configuration (`.env`) & Backend Setup
+#### 3. Environment Configuration (`.env`) & Backend Setup
 ```bash
 cd backend
 cp .env.example .env
@@ -100,7 +112,7 @@ npm run dev:all
 ```
 *Runs Express API (`http://localhost:5000`), Bull Board (`/admin/queues`), and standalone Worker together. Or run them in separate terminals via `npm run dev` and `npm run worker`.*
 
-### 4. Frontend Setup
+#### 4. Frontend Setup
 ```bash
 cd frontend
 npm install

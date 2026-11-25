@@ -389,3 +389,18 @@ Status: ✅ Complete | 🔄 In Progress | ❌ Blocked | ⚠️ Needs Review
 - ✅ Pushing updated `render.yaml` to GitHub `main` so user can re-validate Blueprint on Render.
 
 **Status:** 🔄 Pushing Blueprint fix to GitHub.
+
+
+---
+
+### [2026-11-25 23:50] — LEAD — Full-Stack Containerization (`Dockerfile`s & 6-Service Docker Compose)
+
+**Actions Completed:**
+- ✅ Added `backend/Dockerfile` (`node:20-slim`, production deps, `/api/health` check) & `backend/.dockerignore`.
+- ✅ Added `frontend/Dockerfile` (multi-stage `node:20-alpine` build -> `nginx:1.27-alpine`), `frontend/nginx.conf` (serves SPA + proxies `/api/` and `/admin/queues` to `api:5000` with `15m` body size for attachments), & `frontend/.dockerignore`.
+- ✅ Upgraded root `docker-compose.yml` from 3 backing services to full 6-service orchestration (`postgres`, `redis`, `elasticsearch`, `api`, `worker`, `frontend`) on `reachinbox_net` with `service_healthy` ordering (eliminating first-boot Postgres enum creation races between API and Worker), plus root `.env.example`.
+- ✅ Updated `README.md` with both Full-Stack Docker Launch (`docker compose up -d --build`) and Hybrid Infrastructure Docker (`docker compose up -d postgres redis elasticsearch`) guides.
+- ✅ Verified frontend build (`vite build` in `3.57s`) and backend integration suite (`npm test` -> 7/7 suites passed in `21064ms`).
+- 🔍 Checked local Windows host for Docker readiness: Docker Desktop is not installed and `wsl --status` reports Virtual Machine Platform / WSL 2 is not yet enabled (requires Windows admin UAC + reboot before `docker compose up -d` can run natively on this PC).
+
+**Status:** ✅ Complete in repository and ready to run as soon as WSL 2 + Docker Desktop are enabled on host.
