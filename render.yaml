@@ -1,0 +1,82 @@
+# Render Blueprint for Gmail Scheduler (ReachInbox / OtherSync)
+# Deploy all services cleanly on Render's Free Plan: https://dashboard.render.com/blueprints
+
+databases:
+  - name: email-job-scheduler-db
+    databaseName: email_scheduler
+    user: reachinbox
+    plan: free
+    region: oregon
+
+services:
+  # 1. Key Value (Redis-compatible store for BullMQ queues & atomic hourly counters)
+  - type: keyvalue
+    name: email-job-scheduler-redis
+    plan: free
+    region: oregon
+    maxmemoryPolicy: noeviction
+
+  # 2. Backend API + Embedded BullMQ Worker (runs free tier without separate paid worker)
+  - type: web
+    name: email-job-scheduler-api
+    runtime: node
+    plan: free
+    region: oregon
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ENABLE_EMBEDDED_WORKER
+        value: "true"
+      - key: ALLOW_RENDER_ORIGINS
+        value: "true"
+      - key: WORKER_CONCURRENCY
+        value: "5"
+      - key: MIN_DELAY_BETWEEN_EMAILS_MS
+        value: "2000"
+      - key: MAX_EMAILS_PER_HOUR_PER_SENDER
+        value: "200"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: email-job-scheduler-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: email-job-scheduler-redis
+          property: connectionString
+      - key: FRONTEND_URL
+        value: https://email-job-scheduler-frontend.onrender.com
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: SLACK_CLIENT_ID
+        sync: false
+      - key: SLACK_CLIENT_SECRET
+        sync: false
+
+  # 3. Frontend React SPA Static Site
+  - type: web
+    name: email-job-scheduler-frontend
+    runtime: static
+    plan: free
+    region: oregon
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        fromService:
+          type: web
+          name: email-job-scheduler-api
+          envVarKey: RENDER_EXTERNAL_URL

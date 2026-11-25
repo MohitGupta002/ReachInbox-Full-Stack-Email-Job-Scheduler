@@ -1,0 +1,47 @@
+{
+  "name": "reachinbox-scheduler-backend",
+  "version": "1.0.0",
+  "description": "ReachInbox Full-Stack Email Job Scheduler Backend in Pure JavaScript",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node src/server.js",
+    "worker": "node src/worker.js",
+    "dev:all": "npx concurrently \"npm run dev\" \"npm run worker\"",
+    "test": "node test_suite.js"
+  },
+  "dependencies": {
+    "@bull-board/api": "^6.7.12",
+    "@bull-board/express": "^6.7.12",
+    "@elastic/elasticsearch": "^8.17.0",
+    "bullmq": "^5.41.6",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "ioredis": "^5.5.0",
+    "ioredis-mock": "^8.13.1",
+    "jsonwebtoken": "^9.0.2",
+    "nodemailer": "^6.10.0",
+    "passport": "^0.7.0",
+    "passport-google-oauth20": "^2.0.0",
+    "pg": "^8.13.3",
+    "pg-hstore": "^2.3.4",
+    "sequelize": "^6.37.5",
+    "sqlite3": "^5.1.7",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "keywords": [
+    "email-scheduler",
+    "bullmq",
+    "express",
+    "redis",
+    "postgresql",
+    "reachinbox"
+  ],
+  "author": "Antigravity Crew",
+  "license": "MIT"
+}
