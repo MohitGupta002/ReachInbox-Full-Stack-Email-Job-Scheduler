@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import api from '../services/api';
 import {
   Search,
@@ -13,10 +13,11 @@ import {
   Inbox,
   ChevronLeft,
   ChevronRight,
+  RotateCcw,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-export default function EmailTable({ onOpenCompose, refreshTrigger }) {
+export default function EmailTable({ onOpenCompose, refreshTrigger, stats }) {
   const [activeTab, setActiveTab] = useState('scheduled'); // 'scheduled' | 'sent'
   const [emails, setEmails] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -25,19 +26,24 @@ export default function EmailTable({ onOpenCompose, refreshTrigger }) {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
+  const [retryingId, setRetryingId] = useState(null);
+  const prevTriggerRef = useRef(refreshTrigger);
 
   // Debounced Search or regular tab/page load (300ms)
   useEffect(() => {
+    const isSilentRefresh = prevTriggerRef.current !== refreshTrigger;
+    prevTriggerRef.current = refreshTrigger;
+
     const handler = setTimeout(() => {
-      fetchEmails();
-    }, 300);
+      fetchEmails({ silent: isSilentRefresh });
+    }, isSilentRefresh ? 50 : 300);
 
     return () => clearTimeout(handler);
   }, [activeTab, searchQuery, statusFilter, page, refreshTrigger]);
 
-  const fetchEmails = async () => {
+  const fetchEmails = async ({ silent = false } = {}) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
 
       if (searchQuery.trim() || statusFilter) {
         const res = await api.get('/emails/search', {
@@ -65,6 +71,19 @@ export default function EmailTable({ onOpenCompose, refreshTrigger }) {
       toast.error('Could not load email records');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRetryJob = async (jobId) => {
+    try {
+      setRetryingId(jobId);
+      await api.post(`/emails/${jobId}/retry`);
+      toast.success('Email re-queued for immediate delivery');
+      fetchEmails({ silent: true });
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to retry job');
+    } finally {
+      setRetryingId(null);
     }
   };
 
@@ -145,7 +164,7 @@ export default function EmailTable({ onOpenCompose, refreshTrigger }) {
                 : 'text-slate-500 hover:text-slate-800'
             }`}
           >
-            Scheduled Queue
+            Scheduled Queue ({stats?.totalActive ?? 0})
           </button>
           <button
             onClick={() => {
@@ -160,7 +179,7 @@ export default function EmailTable({ onOpenCompose, refreshTrigger }) {
                 : 'text-slate-500 hover:text-slate-800'
             }`}
           >
-            Sent History
+            Sent History ({(stats?.sent ?? 0) + (stats?.failed ?? 0)})
           </button>
         </div>
 
@@ -306,6 +325,7 @@ export default function EmailTable({ onOpenCompose, refreshTrigger }) {
 
                   <td className="py-3.5 px-3">{getStatusBadge(email)}</td>
 
+                  {/* Preview / Delivery / Retry */}
                   <td className="py-3.5 px-3 text-right">
                     {email.ethereal_preview_url ? (
                       <a
@@ -321,6 +341,15 @@ export default function EmailTable({ onOpenCompose, refreshTrigger }) {
                       <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-emerald-50 text-emerald-700 text-[11px] font-semibold border border-emerald-200/80">
                         Gmail / SMTP Sent
                       </span>
+                    ) : email.status === 'FAILED' ? (
+                      <button
+                        onClick={() => handleRetryJob(email.id)}
+                        disabled={retryingId === email.id}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold text-xs border border-rose-200/80 transition-colors"
+                      >
+                        <RotateCcw className={`w-3 h-3 ${retryingId === email.id ? 'animate-spin' : ''}`} />
+                        <span>{retryingId === email.id ? 'Retrying...' : 'Retry Send'}</span>
+                      </button>
                     ) : (
                       <span className="text-slate-300 text-xs">—</span>
                     )}

@@ -1,15 +1,49 @@
+const dns = require('dns').promises;
+const net = require('net');
 const nodemailer = require('nodemailer');
 const Sender = require('../models/Sender');
 
-// In-memory cache for Nodemailer transports keyed by sender_id
+// Cache resolved transports briefly (5 minutes) so rotating SMTP IPs stay fresh
 const transportCache = new Map();
+const TRANSPORT_TTL_MS = 5 * 60 * 1000;
 
-function buildTransport(senderConfig) {
+/**
+ * Resolves SMTP hostnames via OS getaddrinfo (IPv4 preferred) instead of Nodemailer's
+ * internal c-ares dns.Resolver.resolve4, avoiding Windows queryA ETIMEOUT hangs.
+ */
+async function resolveSmtpHost(hostname) {
+  const host = String(hostname || '').trim();
+  if (!host || net.isIP(host)) {
+    return { connectHost: host, servername: host };
+  }
+
+  try {
+    const { address } = await dns.lookup(host, { family: 4 });
+    return { connectHost: address, servername: host };
+  } catch (ipv4Err) {
+    try {
+      const { address } = await dns.lookup(host);
+      return { connectHost: address, servername: host };
+    } catch (fallbackErr) {
+      return { connectHost: host, servername: host };
+    }
+  }
+}
+
+async function buildTransport(senderConfig) {
   const port = Number(senderConfig.smtp_port) || 587;
+  const { connectHost, servername } = await resolveSmtpHost(senderConfig.smtp_host);
+
   return nodemailer.createTransport({
-    host: senderConfig.smtp_host,
+    host: connectHost,
     port,
     secure: port === 465,
+    tls: {
+      servername,
+    },
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 20000,
     auth: {
       user: senderConfig.smtp_user,
       pass: senderConfig.smtp_pass,
@@ -17,13 +51,17 @@ function buildTransport(senderConfig) {
   });
 }
 
-function getOrCreateTransport(sender) {
-  if (transportCache.has(sender.id)) {
-    return transportCache.get(sender.id);
+async function getOrCreateTransport(sender) {
+  const cached = transportCache.get(sender.id);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.transport;
   }
 
-  const transport = buildTransport(sender);
-  transportCache.set(sender.id, transport);
+  const transport = await buildTransport(sender);
+  transportCache.set(sender.id, {
+    transport,
+    expiresAt: Date.now() + TRANSPORT_TTL_MS,
+  });
   return transport;
 }
 
@@ -70,7 +108,7 @@ async function createCustomSmtpSender({
   };
 
   if (!skipVerify) {
-    const tempTransport = buildTransport(config);
+    const tempTransport = await buildTransport(config);
     await tempTransport.verify();
   }
 
@@ -94,7 +132,7 @@ async function sendEmailWithSender(emailJob) {
     throw new Error(`Sender with ID ${emailJob.sender_id} not found.`);
   }
 
-  const transport = getOrCreateTransport(sender);
+  const transport = await getOrCreateTransport(sender);
   const bodyText = emailJob.body || '';
 
   const info = await transport.sendMail({

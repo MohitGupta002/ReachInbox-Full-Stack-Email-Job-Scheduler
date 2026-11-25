@@ -65,6 +65,11 @@ const EmailJob = sequelize.define('EmailJob', {
     type: DataTypes.INTEGER,
     allowNull: true,
   },
+  retry_count: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+  },
   error_message: {
     type: DataTypes.TEXT,
     allowNull: true,

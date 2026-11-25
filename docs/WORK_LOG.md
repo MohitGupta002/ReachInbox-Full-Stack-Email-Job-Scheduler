@@ -311,3 +311,18 @@ Status: ✅ Complete | 🔄 In Progress | ❌ Blocked | ⚠️ Needs Review
 - ✅ Updated frontend API links across `services/api.js`, `AuthContext.jsx`, `SlackModal.jsx`, and `Sidebar.jsx` to support `VITE_API_URL`.
 
 **Status:** 🟢 Production bundle, Render Blueprint, and local git commit ready.
+
+---
+
+### [2026-11-25 18:33] — LEAD — Root-Cause Fix for `queryA ETIMEOUT`, Standalone Retries & Live UI Sync
+
+**Root Cause Found from User Test (`mgstudy108@gmail.com`):**
+- 🔍 Inspected `email_scheduler.sqlite` and worker logs: Google OAuth login (`anime150915@gmail.com`) succeeded cleanly, and the scheduled job triggered on time, but failed inside Nodemailer with `queryA ETIMEOUT smtp.ethereal.email` (`EDNS`). Nodemailer's internal `dns.Resolver.resolve4()` (raw c-ares UDP) timed out on Windows after ~75s while OS `dns.lookup` resolved `smtp.ethereal.email` in `7ms`, and standalone fallback mode marked the job `FAILED` without retrying.
+
+**Fixes Applied:**
+- 🔧 Fixed `backend/src/services/mailerService.js`: Resolved SMTP hostnames cleanly via OS `dns.lookup(..., { family: 4 })` + `tls: { servername }` and explicit connect/greeting/socket timeouts (`15s`/`15s`/`20s`). Confirmed live Ethereal verify + delivery drops to ~3.5s–8.9s with zero `queryA ETIMEOUT`.
+- 🔧 Added automatic 3-attempt exponential backoff retries (`retry_count` on `EmailJob`, rate-limit counter refund on transient SMTP errors) in `jobProcessorService.js` + additive SQLite schema migration in `models/index.js`.
+- 🔧 Added manual 1-click job retry endpoint (`POST /api/emails/:id/retry`) in `emailController.js` & `emailRoutes.js`, plus guard for non-finite `startTime` in `scheduleService.js`.
+- 🔧 Upgraded `DashboardPage.jsx`, `EmailTable.jsx`, and `ComposeModal.jsx` with automatic live queue refresh (polling stats every 3s + silent zero-flicker table updates), live tab counts, **"Retry Send"** action on failed rows, **"Send Now"** quick button, and explicit Ethereal Sandbox vs Live Gmail SMTP guidance.
+
+**Status:** 🟢 Verified fix via live SMTP check, frontend build, and full backend test suite.

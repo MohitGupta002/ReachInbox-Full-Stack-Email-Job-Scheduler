@@ -13,7 +13,8 @@ async function scheduleBatch({
   delayMs,
   hourlyLimit,
 }) {
-  const baseMs = Math.max(Date.now(), startTime ? new Date(startTime).getTime() : Date.now());
+  const parsedStart = startTime ? new Date(startTime).getTime() : NaN;
+  const baseMs = Number.isFinite(parsedStart) ? Math.max(Date.now(), parsedStart) : Date.now();
   const parsedDelay = Number(delayMs);
   const minDelay = Number.isFinite(parsedDelay) && parsedDelay >= 0
     ? parsedDelay

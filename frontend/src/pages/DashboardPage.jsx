@@ -71,7 +71,18 @@ export default function DashboardPage() {
   const fetchStats = async () => {
     try {
       const res = await api.get('/emails/stats');
-      setStats(res.data);
+      setStats((prev) => {
+        if (
+          prev &&
+          (prev.scheduled !== res.data.scheduled ||
+            prev.sent !== res.data.sent ||
+            prev.rateLimited !== res.data.rateLimited ||
+            prev.failed !== res.data.failed)
+        ) {
+          setRefreshTrigger((t) => t + 1);
+        }
+        return res.data;
+      });
     } catch (err) {
       console.warn('Could not fetch email stats:', err.message);
     }
@@ -100,13 +111,15 @@ export default function DashboardPage() {
     fetchStats();
     fetchHealth();
     fetchSendersList();
+  }, [refreshTrigger]);
 
+  useEffect(() => {
     const interval = setInterval(() => {
       fetchStats();
-    }, 5000);
+    }, 3000);
 
     return () => clearInterval(interval);
-  }, [refreshTrigger]);
+  }, []);
 
   const handleScheduleSuccess = () => {
     setRefreshTrigger((prev) => prev + 1);
@@ -199,6 +212,7 @@ export default function DashboardPage() {
                     setIsComposeOpen(true);
                   }}
                   refreshTrigger={refreshTrigger}
+                  stats={stats}
                 />
               </section>
             </>
@@ -252,6 +266,7 @@ export default function DashboardPage() {
                   setIsComposeOpen(true);
                 }}
                 refreshTrigger={refreshTrigger}
+                stats={stats}
               />
             </>
           )}

@@ -258,7 +258,18 @@ async function runComprehensiveTests() {
     const dupCheck = await processEmailJob({ emailJobId: sentRes.body.emails[0].id });
     assert.strictEqual(dupCheck.skipped, true);
     assert.strictEqual(dupCheck.reason, 'already_sent_or_missing');
-    console.log(`✅ SUITE 3 PASSED: Delivered 2 real Ethereal emails (${benchmarks.etherealSendMs}ms), preview URLs captured, duplicate blocked.`);
+
+    // Retry endpoint check (cannot retry SENT; retrying a FAILED row re-queues and delivers cleanly)
+    const sentRetryAttempt = await request('POST', `/api/emails/${sentRes.body.emails[0].id}/retry`, {}, cookie);
+    assert.strictEqual(sentRetryAttempt.statusCode, 400);
+
+    await EmailJob.update({ status: 'FAILED', error_message: 'Simulated ETIMEOUT' }, { where: { id: sentRes.body.emails[0].id } });
+    const failedRetryAttempt = await request('POST', `/api/emails/${sentRes.body.emails[0].id}/retry`, {}, cookie);
+    assert.strictEqual(failedRetryAttempt.statusCode, 200);
+    await processDueFallbackJobs();
+    const afterRetryRow = await EmailJob.findByPk(sentRes.body.emails[0].id);
+    assert.strictEqual(afterRetryRow.status, 'SENT');
+    console.log(`✅ SUITE 3 PASSED: Delivered 2 real Ethereal emails (${benchmarks.etherealSendMs}ms), preview URLs captured, duplicate blocked & failed-retry verified.`);
 
     // ----------------------------------------------------------------
     // SUITE 4: Burst Load, Rate Limiting Overflow & Slack Alert Dedupe

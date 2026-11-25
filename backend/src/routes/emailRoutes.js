@@ -17,6 +17,9 @@ router.get('/sent', emailController.getSent);
 // Full-text search with Elasticsearch (fallback to DB)
 router.get('/search', emailController.search);
 
+// Retry failed email job
+router.post('/:id/retry', emailController.retryJob);
+
 // Metrics & Stats
 router.get('/stats', emailController.getStats);
 

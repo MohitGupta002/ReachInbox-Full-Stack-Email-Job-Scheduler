@@ -1,8 +1,9 @@
 const { Op } = require('sequelize');
 const EmailJob = require('../models/EmailJob');
 const Sender = require('../models/Sender');
+const { emailQueue } = require('../queues/emailQueue');
 const { scheduleBatch } = require('../services/scheduleService');
-const { searchEmails } = require('../services/elasticService');
+const { searchEmails, updateEmailDoc } = require('../services/elasticService');
 
 const SENDER_INCLUDE = [
   {
@@ -180,10 +181,58 @@ async function getStats(req, res) {
   }
 }
 
+// Retry a failed email job immediately
+async function retryJob(req, res) {
+  try {
+    const jobRow = await EmailJob.findOne({
+      where: { id: req.params.id, user_id: req.user.id },
+    });
+
+    if (!jobRow) {
+      return res.status(404).json({ error: 'Email job not found' });
+    }
+    if (jobRow.status === 'SENT') {
+      return res.status(400).json({ error: 'Email has already been sent' });
+    }
+
+    await jobRow.update({
+      status: 'SCHEDULED',
+      scheduled_at: new Date(),
+      retry_count: 0,
+      error_message: null,
+    });
+    await updateEmailDoc(jobRow);
+
+    if (emailQueue) {
+      await emailQueue.add(
+        'send-email',
+        {
+          emailJobId: jobRow.id,
+          userId: jobRow.user_id,
+          senderId: jobRow.sender_id,
+          hourlyLimit: jobRow.hourly_limit,
+        },
+        {
+          jobId: `email-${jobRow.id}-retry-${Date.now()}`,
+          delay: 0,
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 5000 },
+        }
+      );
+    }
+
+    res.json({ message: 'Email re-queued for immediate delivery', job: jobRow });
+  } catch (err) {
+    console.error('[EmailController] Retry failed:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
 module.exports = {
   schedule,
   getScheduled,
   getSent,
   search,
   getStats,
+  retryJob,
 };

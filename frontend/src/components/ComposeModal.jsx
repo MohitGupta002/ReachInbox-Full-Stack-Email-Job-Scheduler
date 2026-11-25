@@ -277,6 +277,23 @@ export default function ComposeModal({ isOpen, onClose, onScheduleSuccess, prefi
               ))}
             </select>
 
+            {(() => {
+              const activeSenderObj = senders.find((s) => s.id === selectedSender);
+              if (!activeSenderObj) return null;
+              if ((activeSenderObj.provider || 'ethereal') === 'ethereal') {
+                return (
+                  <p className="mt-1.5 text-[11px] text-amber-700 bg-amber-50 border border-amber-200/70 rounded-xl px-3 py-1.5">
+                    <strong>Ethereal Sandbox Mode:</strong> Messages are trapped for safe testing and viewable via <strong>Inspect Email</strong> in Sent History (they do not arrive in real Gmail inboxes). Click <strong>Connect Real Gmail</strong> above for real inbox delivery.
+                  </p>
+                );
+              }
+              return (
+                <p className="mt-1.5 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200/70 rounded-xl px-3 py-1.5">
+                  <strong>Live {activeSenderObj.provider.toUpperCase()} SMTP:</strong> Emails will deliver directly to real recipient inboxes.
+                </p>
+              );
+            })()}
+
             {showGmailForm && (
               <div className="mt-3 p-4 rounded-2xl bg-emerald-50/60 border border-emerald-200/80 space-y-3">
                 <div className="flex items-center justify-between">
@@ -405,9 +422,24 @@ export default function ComposeModal({ isOpen, onClose, onScheduleSuccess, prefi
           {/* Scheduling & Rate Limiting Controls */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-100">
             <div>
-              <label className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block mb-1">
-                Start Time
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+                  Start Time
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const now = new Date();
+                    const isoLocal = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+                      .toISOString()
+                      .slice(0, 16);
+                    setStartTime(isoLocal);
+                  }}
+                  className="text-[10px] font-bold text-blue-600 hover:underline"
+                >
+                  Send Now
+                </button>
+              </div>
               <input
                 type="datetime-local"
                 value={startTime}
