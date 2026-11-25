@@ -15,6 +15,7 @@ services:
     plan: free
     region: oregon
     maxmemoryPolicy: noeviction
+    ipAllowList: []
 
   # 2. Backend API + Embedded BullMQ Worker (runs free tier without separate paid worker)
   - type: web
@@ -65,8 +66,6 @@ services:
   - type: web
     name: email-job-scheduler-frontend
     runtime: static
-    plan: free
-    region: oregon
     rootDir: frontend
     buildCommand: npm install && npm run build
     staticPublishPath: ./dist

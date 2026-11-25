@@ -376,3 +376,16 @@ Status: ✅ Complete | 🔄 In Progress | ❌ Blocked | ⚠️ Needs Review
 - ✅ Reconfigured git remote `origin` to `https://github.com/MohitGupta002/ReachInbox-Full-Stack-Email-Job-Scheduler.git` and prepared push of `main`.
 
 **Status:** 🔄 Verifying remote push to GitHub.
+
+
+---
+
+### [2026-11-25 23:05] — LEAD — Render Blueprint Schema Fix (`render.yaml`)
+
+**Actions Completed:**
+- ✅ Fixed Render Blueprint validation errors in `render.yaml`:
+  - Added `ipAllowList: []` to `services[0]` (`email-job-scheduler-redis`, `type: keyvalue`) so private internal connections work and Render accepts the Blueprint.
+  - Removed `region: oregon` and `plan: free` from `services[2]` (`email-job-scheduler-frontend`, `runtime: static`), since Render static sites deploy globally via CDN without regional or compute-plan keys.
+- ✅ Pushing updated `render.yaml` to GitHub `main` so user can re-validate Blueprint on Render.
+
+**Status:** 🔄 Pushing Blueprint fix to GitHub.
