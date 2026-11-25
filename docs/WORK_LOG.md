@@ -404,3 +404,14 @@ Status: ✅ Complete | 🔄 In Progress | ❌ Blocked | ⚠️ Needs Review
 - 🔍 Checked local Windows host for Docker readiness: Docker Desktop is not installed and `wsl --status` reports Virtual Machine Platform / WSL 2 is not yet enabled (requires Windows admin UAC + reboot before `docker compose up -d` can run natively on this PC).
 
 **Status:** ✅ Complete in repository and ready to run as soon as WSL 2 + Docker Desktop are enabled on host.
+
+
+---
+
+### [2026-11-25 23:57] — LEAD — Page Title & UI Rebrand to OtherSync
+
+**Actions Completed:**
+- ✅ Updated page `<title>` in `frontend/index.html` from `ReachInbox — OtherSync Email Job Scheduler` to `OtherSync — Email Job Scheduler` so browser tabs and link previews display `OtherSync` cleanly.
+- ✅ Updated UI display labels in `ComposeModal.jsx`, `DashboardPage.jsx`, and `LoginPage.jsx` to `OtherSync`, rebuilt frontend (`vite build` in `2.95s`), and pushed to `main` for Render auto-deploy.
+
+**Status:** ✅ Complete and pushed to GitHub.

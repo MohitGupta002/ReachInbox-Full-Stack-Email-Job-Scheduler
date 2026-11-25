@@ -217,7 +217,7 @@ export default function DashboardPage() {
   const handleAddEtherealSender = async () => {
     try {
       const res = await api.post('/senders/ethereal', {
-        displayName: `ReachInbox Ethereal ${senders.length + 1}`,
+        displayName: `OtherSync Ethereal ${senders.length + 1}`,
         hourlyLimit: 200,
       });
       toast.success(`Created Ethereal sender: ${res.data.email}`);

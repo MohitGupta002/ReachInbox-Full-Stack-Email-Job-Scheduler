@@ -26,8 +26,8 @@ export default function LoginPage() {
   const handleDemoLogin = async () => {
     try {
       setDemoLoading(true);
-      await loginAsDemo('reachinbox.lead@reachinbox.ai', 'ReachInbox Architect');
-      toast.success('Signed in as ReachInbox Demo Architect');
+      await loginAsDemo('reachinbox.lead@reachinbox.ai', 'OtherSync Architect');
+      toast.success('Signed in as OtherSync Demo Architect');
     } catch (err) {
       toast.error('Failed to initialize demo session');
     } finally {

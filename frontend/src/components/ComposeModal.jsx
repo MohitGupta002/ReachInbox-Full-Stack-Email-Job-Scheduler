@@ -70,7 +70,7 @@ export default function ComposeModal({ isOpen, onClose, onScheduleSuccess, prefi
     try {
       setCreatingSender(true);
       const res = await api.post('/senders/ethereal', {
-        displayName: 'ReachInbox Sender ' + (senders.length + 1),
+        displayName: 'OtherSync Sender ' + (senders.length + 1),
         hourlyLimit: hourlyLimit || 200,
       });
       setSenders([res.data, ...senders]);
@@ -435,7 +435,7 @@ export default function ComposeModal({ isOpen, onClose, onScheduleSuccess, prefi
               type="text"
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
-              placeholder="Scaling ReachInbox outbound campaigns automatically"
+              placeholder="Scaling OtherSync outbound campaigns automatically"
               className="w-full px-4 py-3 rounded-2xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-colors font-medium"
               required
             />
