@@ -17,6 +17,8 @@ This entire system is implemented in **vanilla JavaScript (Node.js + Express.js 
 
 ## 🏛️ System Architecture
 
+> Full architecture diagrams, ER schemas, and sequence flows: **[`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)** | **[`docs/SYSTEM_DESIGN.md`](./docs/SYSTEM_DESIGN.md)**
+
 ```
                     ┌────────────────────────────────────────┐
                     │       React Dashboard (Vite JSX)       │
@@ -77,28 +79,26 @@ This entire system is implemented in **vanilla JavaScript (Node.js + Express.js 
 ## 📦 Getting Started
 
 ### 1. Prerequisites
-- Node.js v18+ (tested on Node v24)
-- Docker & Docker Compose (optional, automatic resilient SQLite fallback included)
+- **Node.js v18+** (tested on Node v24)
+- **Docker & Docker Compose** (optional — automatic resilient SQLite + standalone dispatcher fallback included)
+- **Google OAuth 2.0 Credentials** (Client ID & Client Secret from Google Cloud Console)
+- *(Optional)* **Slack App / Incoming Webhook URL** for hourly rate-limit alerts
 
 ### 2. Infrastructure Setup (Docker)
 ```bash
 docker-compose up -d
 ```
-*Starts PostgreSQL 16 (port 5432), Redis 7 with AOF persistence (port 6379), and Elasticsearch 8 (port 9200).*
+*Starts PostgreSQL 16 (port 5432), Redis 7 with AOF+RDB persistence (port 6379), and Elasticsearch 8 (port 9200).*
 
-### 3. Backend Setup
+### 3. Environment Configuration (`.env`) & Backend Setup
 ```bash
 cd backend
+cp .env.example .env
+# Edit backend/.env with your JWT_SECRET, GOOGLE_CLIENT_ID, and GOOGLE_CLIENT_SECRET
 npm install
-npm run dev
+npm run dev:all
 ```
-*API runs at `http://localhost:5000` with Bull Board at `http://localhost:5000/admin/queues`.*
-
-To run the standalone worker in another terminal:
-```bash
-cd backend
-npm run worker
-```
+*Runs Express API (`http://localhost:5000`), Bull Board (`/admin/queues`), and standalone Worker together. Or run them in separate terminals via `npm run dev` and `npm run worker`.*
 
 ### 4. Frontend Setup
 ```bash
@@ -110,8 +110,8 @@ npm run dev
 
 ### 5. One-Click Cloud Deployment (Render Blueprint)
 This repository includes a complete [`render.yaml`](./render.yaml) targeting Render's Free tier (`email-job-scheduler-api` Web Service with embedded BullMQ worker, `email-job-scheduler-frontend` Static Site, `email-job-scheduler-db` PostgreSQL, and `email-job-scheduler-redis` Key Value).
-1. Push this repository to GitHub (`email-job-scheduler`).
-2. In Render Dashboard, choose **New → Blueprint** and select the repo.
+1. Push this repository to GitHub (`ReachInbox-Full-Stack-Email-Job-Scheduler`).
+2. In Render Dashboard (**https://dashboard.render.com/blueprints**), choose **New → Blueprint Instance** and select `MohitGupta002/ReachInbox-Full-Stack-Email-Job-Scheduler`.
 3. Add your `GOOGLE_CLIENT_ID` & `GOOGLE_CLIENT_SECRET` (and whitelist `https://<your-api>.onrender.com/api/auth/google/callback` in Google Cloud Console) plus `FRONTEND_URL` matching your deployed Static Site URL.
 4. **Important for Render Free Tier Email Sending:** Render Free Tier blocks outbound SMTP ports (`25`, `465`, `587`), so use **1-Click Gmail OAuth (HTTPS port 443)** or **Resend HTTPS API** in **Settings** when hosted on Render's Free plan (SMTP App Password / Ethereal works locally and on paid plans).
 
@@ -134,7 +134,10 @@ npm test
 
 ---
 
-## 🎬 5-Minute Demo Video Script
+## 🎬 Demo Video & Walkthrough
+
+> **Demo Video Link:** `[Insert Demo Video URL Here]`  
+> Full recorded test evidence is also documented in **[`docs/TESTING_REPORT.md`](./docs/TESTING_REPORT.md)**.
 
 | Timestamp | Action to Demonstrate |
 |-----------|------------------------|
@@ -150,22 +153,37 @@ npm test
 
 | Method | Endpoint | Description | Auth |
 |--------|----------|-------------|------|
-| `GET` | `/api/auth/google` | Initiates Google OAuth 2.0 flow | Public |
+| `GET` | `/api/auth/google` | Initiates Google OAuth 2.0 login flow | Public |
+| `GET` | `/api/auth/google/gmail` | Authorizes Gmail REST API send scope (HTTPS 443) | Public |
 | `GET` | `/api/auth/google/callback` | OAuth redirect callback | Public |
 | `POST` | `/api/auth/dev-login` | 1-Click demo authentication | Public |
 | `GET` | `/api/auth/me` | Current authenticated user profile | JWT |
 | `POST` | `/api/auth/logout` | Clears authentication cookie | JWT |
-| `GET` | `/api/senders` | List sender accounts (auto-creates default) | JWT |
+| `GET` | `/api/senders` | List senders + live UTC hourly quota usage | JWT |
 | `POST` | `/api/senders/ethereal` | Spin up fresh Ethereal SMTP sender | JWT |
-| `POST` | `/api/senders/smtp` | Verify & connect real Gmail / custom SMTP sender | JWT |
+| `POST` | `/api/senders/smtp` | Connect Gmail SMTP, custom SMTP, or Resend HTTPS API | JWT |
+| `POST` | `/api/senders/:id/reset-limit` | Reset current-hour rate limit counter (testing) | JWT |
 | `DELETE` | `/api/senders/:id` | Remove a configured sender account | JWT |
-| `POST` | `/api/emails/schedule` | Schedule batch of email jobs | JWT |
+| `POST` | `/api/emails/schedule` | Schedule batch of email jobs (with optional attachments) | JWT |
 | `GET` | `/api/emails/scheduled` | Get scheduled/delayed jobs | JWT |
 | `GET` | `/api/emails/sent` | Get sent/failed jobs with preview URLs | JWT |
-| `GET` | `/api/emails/search` | Full-text Elasticsearch search | JWT |
+| `GET` | `/api/emails/search` | Full-text Elasticsearch / DB fallback search | JWT |
+| `POST` | `/api/emails/:id/retry` | Retry a failed job immediately | JWT |
+| `POST` | `/api/emails/retry-all-failed` | Re-queue all failed jobs | JWT |
+| `DELETE` | `/api/emails/:id` | Delete a job record | JWT |
 | `GET` | `/api/emails/stats` | Aggregated dashboard metrics | JWT |
 | `GET` | `/api/slack/connect` | Start Slack OAuth v2 flow | JWT |
 | `GET` | `/api/slack/status` | Current Slack integration status | JWT |
 | `POST` | `/api/slack/manual` | Connect manual Slack webhook URL | JWT |
 | `DELETE`| `/api/slack/disconnect` | Deactivate Slack notifications | JWT |
-| `GET` | `/admin/queues` | Live Bull Board queue monitor | Public / Admin |
+| `GET` | `/admin/queues` | Live Bull Board / Queue Inspector monitor | Public / Admin |
+
+---
+
+## ⚠️ Known Limitations
+
+1. **Render Free Tier Outbound SMTP Blocking:** Render blocks outbound ports `25`, `465`, and `587` on Free Web Services. Use **1-Click Gmail OAuth (HTTPS)** or **Resend HTTPS API** on Render Free Tier, or run with Ethereal/Gmail SMTP locally or on paid instances.
+2. **Render Free Tier Lifecycle:** Free Render Web Services spin down after 15 minutes of inactivity (~30–50s cold start), and Free Render PostgreSQL databases expire after 30 days.
+3. **Zero-Redis Fallback Mode:** When Redis is unreachable locally (e.g., without Docker), the worker falls back cleanly to a 1-second SQLite persistent dispatcher and DB KV store; full BullMQ delayed sorted sets require a live Redis instance (`docker-compose up -d` or `REDIS_URL`).
+4. **Google OAuth Verification:** While Google Cloud OAuth Consent Screen is in *Testing* status, only approved **Test users** can log in; publish the OAuth app in Google Cloud Console before sharing publicly with reviewers.
+5. **Elasticsearch Fallback:** If Elasticsearch 8 is offline, `/api/emails/search` falls back transparently to relational SQL `LIKE`/`ILIKE` queries rather than failing.

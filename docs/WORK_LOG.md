@@ -366,3 +366,13 @@ Status: ✅ Complete | 🔄 In Progress | ❌ Blocked | ⚠️ Needs Review
 - Verified all **`5 / 5` `SENT`** via live API + Worker (`task-713`), with Ethereal preview URLs captured and `qhb5snmfpu3d5jb6@ethereal.email` hourly quota cleanly reset to `0 / 200` afterwards.
 
 **Status:** ✅ Complete — Backend, PDF Attachments, Quota Controls, and Deployment Blueprint verified.
+
+---
+
+### [2026-11-25 22:54] — LEAD — README Alignment & GitHub Repository Push
+
+**Actions Completed:**
+- ✅ Updated `README.md` to satisfy every Crew Instruction T6.7 deliverable (architecture links, `.env` setup, demo video placeholder, full updated API table, Known Limitations, Render Blueprint deployment guide).
+- ✅ Reconfigured git remote `origin` to `https://github.com/MohitGupta002/ReachInbox-Full-Stack-Email-Job-Scheduler.git` and prepared push of `main`.
+
+**Status:** 🔄 Verifying remote push to GitHub.
