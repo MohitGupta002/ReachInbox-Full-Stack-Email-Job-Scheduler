@@ -1,9 +1,11 @@
 const dns = require('dns').promises;
 const net = require('net');
 const nodemailer = require('nodemailer');
+const MailComposer = require('nodemailer/lib/mail-composer');
 const Sender = require('../models/Sender');
+require('dotenv').config();
 
-// Cache resolved transports briefly (5 minutes) so rotating SMTP IPs stay fresh
+// Cache resolved SMTP transports briefly (5 minutes) so rotating SMTP IPs stay fresh
 const transportCache = new Map();
 const TRANSPORT_TTL_MS = 5 * 60 * 1000;
 
@@ -65,6 +67,127 @@ async function getOrCreateTransport(sender) {
   return transport;
 }
 
+function parseJobAttachments(emailJob) {
+  if (!emailJob.attachments_json) return [];
+  try {
+    const parsed = JSON.parse(emailJob.attachments_json);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((att) => att && att.filename && att.contentBase64)
+      .map((att) => ({
+        filename: String(att.filename),
+        contentType: att.contentType || 'application/octet-stream',
+        content: Buffer.from(att.contentBase64, 'base64'),
+        contentBase64: att.contentBase64,
+      }));
+  } catch (err) {
+    return [];
+  }
+}
+
+/**
+ * Sends via Google Gmail REST API over HTTPS (port 443), avoiding blocked SMTP ports on Render Free Tier.
+ */
+async function sendViaGmailOAuthApi(sender, mailOptions) {
+  const secretSpec = String(sender.smtp_pass || '');
+  let accessToken = null;
+
+  if (secretSpec.startsWith('refresh:')) {
+    const refreshToken = secretSpec.slice('refresh:'.length);
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: process.env.GOOGLE_CLIENT_ID || '',
+        client_secret: process.env.GOOGLE_CLIENT_SECRET || '',
+        refresh_token: refreshToken,
+        grant_type: 'refresh_token',
+      }),
+    });
+    const tokenData = await tokenRes.json();
+    if (!tokenRes.ok || !tokenData.access_token) {
+      throw new Error(
+        `Google OAuth token refresh failed: ${tokenData.error_description || tokenData.error || tokenRes.status}. Reconnect Gmail OAuth in Settings.`
+      );
+    }
+    accessToken = tokenData.access_token;
+  } else if (secretSpec.startsWith('access:')) {
+    accessToken = secretSpec.slice('access:'.length);
+  } else {
+    throw new Error('Missing Gmail OAuth token. Reconnect Gmail via Google OAuth in Settings.');
+  }
+
+  const composer = new MailComposer(mailOptions);
+  const rawMimeBuffer = await composer.compile().build();
+  const base64Url = rawMimeBuffer
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+
+  const sendRes = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ raw: base64Url }),
+  });
+
+  const sendData = await sendRes.json();
+  if (!sendRes.ok) {
+    const msg = sendData.error?.message || JSON.stringify(sendData);
+    throw new Error(`Gmail API send failed (${sendRes.status}): ${msg}`);
+  }
+
+  return {
+    messageId: sendData.id || `gmail-api-${Date.now()}`,
+    previewUrl: null,
+    provider: 'gmail_oauth',
+  };
+}
+
+/**
+ * Sends via Resend HTTPS REST API (port 443) for cloud environments where SMTP ports are blocked.
+ */
+async function sendViaResendApi(sender, mailOptions, rawAttachments) {
+  const payload = {
+    from: mailOptions.from,
+    to: [mailOptions.to],
+    subject: mailOptions.subject,
+    text: mailOptions.text,
+    html: mailOptions.html,
+    ...(rawAttachments.length > 0
+      ? {
+          attachments: rawAttachments.map((att) => ({
+            filename: att.filename,
+            content: att.contentBase64,
+          })),
+        }
+      : {}),
+  };
+
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${sender.smtp_pass}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`Resend API error (${res.status}): ${data.message || JSON.stringify(data)}`);
+  }
+
+  return {
+    messageId: data.id || `resend-${Date.now()}`,
+    previewUrl: null,
+    provider: 'resend',
+  };
+}
+
 // Generate a new Ethereal fake SMTP sender account
 async function createEtherealAccount(userId, displayName = 'ReachInbox Team', hourlyLimit = 200) {
   const testAccount = await nodemailer.createTestAccount();
@@ -82,7 +205,7 @@ async function createEtherealAccount(userId, displayName = 'ReachInbox Team', ho
 }
 
 /**
- * Verifies SMTP credentials via handshake before saving a real Gmail / custom SMTP sender.
+ * Verifies SMTP credentials via handshake before saving a real Gmail / custom SMTP / Resend sender.
  */
 async function createCustomSmtpSender({
   userId,
@@ -96,6 +219,23 @@ async function createCustomSmtpSender({
   provider = 'gmail',
   skipVerify = false,
 }) {
+  if (provider === 'resend') {
+    if (!smtpPass || !String(smtpPass).trim().startsWith('re_')) {
+      throw new Error('Resend API Key must start with re_');
+    }
+    return Sender.create({
+      user_id: userId,
+      email: email.trim(),
+      display_name: displayName || email.trim(),
+      smtp_host: 'api.resend.com',
+      smtp_port: 443,
+      smtp_user: email.trim(),
+      smtp_pass: String(smtpPass).trim(),
+      hourly_limit: Number(hourlyLimit) || 200,
+      provider: 'resend',
+    });
+  }
+
   const normalizedUser = (smtpUser || email || '').trim();
   const normalizedPass =
     provider === 'gmail' ? String(smtpPass || '').replace(/\s+/g, '') : String(smtpPass || '');
@@ -125,25 +265,45 @@ async function createCustomSmtpSender({
   });
 }
 
-// Send email job via sender's transport (works identically for Ethereal and Gmail/custom SMTP)
+// Send email job via sender's transport (supports Ethereal, Gmail SMTP, Gmail OAuth API, and Resend API)
 async function sendEmailWithSender(emailJob) {
   const sender = await Sender.findByPk(emailJob.sender_id);
   if (!sender) {
     throw new Error(`Sender with ID ${emailJob.sender_id} not found.`);
   }
 
-  const transport = await getOrCreateTransport(sender);
   const bodyText = emailJob.body || '';
+  const parsedAttachments = parseJobAttachments(emailJob);
 
-  const info = await transport.sendMail({
+  const mailOptions = {
     from: `"${sender.display_name || sender.email}" <${sender.email}>`,
     to: emailJob.recipient_email,
     subject: emailJob.subject,
     text: bodyText,
     html: `<div style="font-family: sans-serif; line-height: 1.6;">${bodyText.replace(/\n/g, '<br/>')}</div>`,
-  });
+    ...(parsedAttachments.length > 0
+      ? {
+          attachments: parsedAttachments.map((att) => ({
+            filename: att.filename,
+            content: att.content,
+            contentType: att.contentType,
+          })),
+        }
+      : {}),
+  };
 
+  if (sender.provider === 'gmail_oauth') {
+    return sendViaGmailOAuthApi(sender, mailOptions);
+  }
+
+  if (sender.provider === 'resend') {
+    return sendViaResendApi(sender, mailOptions, parsedAttachments);
+  }
+
+  const transport = await getOrCreateTransport(sender);
+  const info = await transport.sendMail(mailOptions);
   const previewUrl = nodemailer.getTestMessageUrl(info) || null;
+
   return {
     messageId: info.messageId,
     previewUrl,

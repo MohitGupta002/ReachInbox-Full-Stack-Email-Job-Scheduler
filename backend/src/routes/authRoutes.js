@@ -5,7 +5,7 @@ const authController = require('../controllers/authController');
 const authMiddleware = require('../middleware/authMiddleware');
 require('dotenv').config();
 
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+const FRONTEND_URL = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/+$/, '');
 
 function requireGoogleConfig(req, res, next) {
   if (!passport.isGoogleOAuthConfigured || !passport.isGoogleOAuthConfigured()) {
@@ -21,11 +21,25 @@ router.get('/providers', (req, res) => {
   });
 });
 
-// Google OAuth start
+// Standard Google OAuth login (profile + email)
 router.get(
   '/google',
   requireGoogleConfig,
-  passport.authenticate('google', { scope: ['profile', 'email'], session: false })
+  passport.authenticate('google', { scope: ['profile', 'email'], session: false, state: 'login' })
+);
+
+// Connect Gmail HTTPS Send permission via Google OAuth (works on Render Free Tier without SMTP ports)
+router.get(
+  '/google/gmail',
+  requireGoogleConfig,
+  passport.authenticate('google', {
+    scope: ['profile', 'email', 'https://www.googleapis.com/auth/gmail.send'],
+    accessType: 'offline',
+    prompt: 'consent',
+    includeGrantedScopes: true,
+    session: false,
+    state: 'connect_gmail',
+  })
 );
 
 // Google OAuth callback with clear error diagnostics

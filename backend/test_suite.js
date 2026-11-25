@@ -201,6 +201,15 @@ async function runComprehensiveTests() {
     const delRes = await request('DELETE', `/api/senders/${customGmail.body.id}`, null, cookie);
     assert.strictEqual(delRes.statusCode, 200);
 
+    // Also test Resend API route validation (re_ key validation)
+    const badResend = await request(
+      'POST',
+      '/api/senders/smtp',
+      { email: 'hi@domain.com', apiKey: 'invalid_key', provider: 'resend' },
+      cookie
+    );
+    assert.strictEqual(badResend.statusCode, 400);
+
     // Create a second independent Ethereal sender for burst rate-limit tests
     const burstSenderRes = await request(
       'POST',
@@ -213,10 +222,11 @@ async function runComprehensiveTests() {
     console.log(`✅ SUITE 2 PASSED: Primary (${primarySender.email}) & Burst (${burstSender.email}) Ethereal senders + Gmail SMTP route verified.`);
 
     // ----------------------------------------------------------------
-    // SUITE 3: Live Ethereal SMTP Delivery + Dual Idempotency Guard
+    // SUITE 3: Live Ethereal SMTP Delivery + PDF Attachment + Idempotency + Retry
     // ----------------------------------------------------------------
-    console.log('\n--- [3/7] Live Scheduling, Real Ethereal Delivery & Idempotency ---');
+    console.log('\n--- [3/7] Live Scheduling, PDF Attachment, Ethereal Delivery & Idempotency ---');
     const tSchedStart = Date.now();
+    const samplePdfBase64 = Buffer.from('%PDF-1.4\n% Sample test PDF attachment payload\n%%EOF').toString('base64');
     const schedLive = await request(
       'POST',
       '/api/emails/schedule',
@@ -228,12 +238,22 @@ async function runComprehensiveTests() {
         startTime: new Date().toISOString(),
         delayMs: 200,
         hourlyLimit: 10,
+        attachments: [
+          {
+            filename: 'sample_attachment.pdf',
+            contentType: 'application/pdf',
+            contentBase64: samplePdfBase64,
+          },
+        ],
       },
       cookie
     );
     benchmarks.scheduleApiMs = Date.now() - tSchedStart;
     assert.strictEqual(schedLive.statusCode, 201);
     assert.strictEqual(schedLive.body.count, 2);
+    assert.strictEqual(schedLive.body.jobs[0].attachments.length, 1);
+    assert.strictEqual(schedLive.body.jobs[0].attachments[0].filename, 'sample_attachment.pdf');
+    assert.strictEqual(schedLive.body.jobs[0].attachments_json, undefined);
 
     for (const job of schedLive.body.jobs) {
       assert.ok(job.bull_job_id.startsWith('email-'));
@@ -269,7 +289,17 @@ async function runComprehensiveTests() {
     await processDueFallbackJobs();
     const afterRetryRow = await EmailJob.findByPk(sentRes.body.emails[0].id);
     assert.strictEqual(afterRetryRow.status, 'SENT');
-    console.log(`✅ SUITE 3 PASSED: Delivered 2 real Ethereal emails (${benchmarks.etherealSendMs}ms), preview URLs captured, duplicate blocked & failed-retry verified.`);
+
+    // Verify hourly quota tracking & reset endpoint after live sends
+    const quotaSenders = await request('GET', '/api/senders', null, cookie);
+    const updatedPrimary = quotaSenders.body.find((s) => s.id === primarySender.id);
+    assert.ok(updatedPrimary.used_this_hour >= 2);
+    const resetQuotaRes = await request('POST', `/api/senders/${primarySender.id}/reset-limit`, {}, cookie);
+    assert.strictEqual(resetQuotaRes.statusCode, 200);
+    const afterResetSenders = await request('GET', '/api/senders', null, cookie);
+    assert.strictEqual(afterResetSenders.body.find((s) => s.id === primarySender.id).used_this_hour, 0);
+
+    console.log(`✅ SUITE 3 PASSED: Delivered 2 real Ethereal emails (${benchmarks.etherealSendMs}ms) with PDF attachment, quota reset, duplicate guard & retry verified.`);
 
     // ----------------------------------------------------------------
     // SUITE 4: Burst Load, Rate Limiting Overflow & Slack Alert Dedupe

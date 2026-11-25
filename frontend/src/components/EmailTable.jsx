@@ -14,6 +14,7 @@ import {
   ChevronLeft,
   ChevronRight,
   RotateCcw,
+  Paperclip,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -312,6 +313,19 @@ export default function EmailTable({ onOpenCompose, refreshTrigger, stats }) {
 
                   <td className="py-3.5 px-3 text-slate-600">
                     <span className="truncate max-w-[260px] block font-medium">{email.subject}</span>
+                    {email.attachments && email.attachments.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {email.attachments.map((att, idx) => (
+                          <span
+                            key={idx}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 text-[10px] font-semibold border border-blue-100"
+                          >
+                            <Paperclip className="w-2.5 h-2.5" />
+                            <span>{att.filename}</span>
+                          </span>
+                        ))}
+                      </div>
+                    )}
                     {email.status === 'FAILED' && email.error_message && (
                       <span className="text-[11px] text-rose-500 block truncate max-w-[260px]">
                         {email.error_message}

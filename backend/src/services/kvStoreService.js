@@ -84,8 +84,30 @@ async function setNxEx(key, ttlSeconds) {
   );
 }
 
+async function getIntValue(key) {
+  if (redis.isRedisAvailable && redis.isRedisAvailable()) {
+    const val = await redis.get(key);
+    return val ? Number(val) || 0 : 0;
+  }
+
+  const existing = await KVStore.findByPk(key);
+  if (!existing) return 0;
+  if (existing.expires_at && existing.expires_at <= new Date()) return 0;
+  return Number(existing.int_value) || 0;
+}
+
+async function deleteKey(key) {
+  if (redis.isRedisAvailable && redis.isRedisAvailable()) {
+    return redis.del(key);
+  }
+
+  return withSqliteWriteLock(() => KVStore.destroy({ where: { key } }));
+}
+
 module.exports = {
   incrWithTtl,
   decrKey,
   setNxEx,
+  getIntValue,
+  deleteKey,
 };

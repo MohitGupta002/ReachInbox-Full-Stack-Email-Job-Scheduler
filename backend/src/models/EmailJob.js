@@ -70,6 +70,10 @@ const EmailJob = sequelize.define('EmailJob', {
     allowNull: false,
     defaultValue: 0,
   },
+  attachments_json: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+  },
   error_message: {
     type: DataTypes.TEXT,
     allowNull: true,

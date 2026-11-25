@@ -3,6 +3,31 @@ const EmailJob = require('../models/EmailJob');
 const { indexEmailDoc } = require('./elasticService');
 require('dotenv').config();
 
+function sanitizeAttachments(attachments) {
+  if (!Array.isArray(attachments) || attachments.length === 0) return null;
+
+  const cleaned = [];
+  let totalBytes = 0;
+
+  for (const att of attachments) {
+    if (!att || !att.filename || !att.contentBase64) continue;
+    const base64 = String(att.contentBase64).replace(/^data:[^;]+;base64,/, '');
+    const estimatedBytes = Math.floor((base64.length * 3) / 4);
+    totalBytes += estimatedBytes;
+    if (totalBytes > 6 * 1024 * 1024) {
+      throw new Error('Total attachment size exceeds 6MB limit.');
+    }
+    cleaned.push({
+      filename: String(att.filename).trim(),
+      contentType: att.contentType || 'application/octet-stream',
+      size: estimatedBytes,
+      contentBase64: base64,
+    });
+  }
+
+  return cleaned.length > 0 ? JSON.stringify(cleaned) : null;
+}
+
 async function scheduleBatch({
   userId,
   senderId,
@@ -12,6 +37,7 @@ async function scheduleBatch({
   startTime,
   delayMs,
   hourlyLimit,
+  attachments,
 }) {
   const parsedStart = startTime ? new Date(startTime).getTime() : NaN;
   const baseMs = Number.isFinite(parsedStart) ? Math.max(Date.now(), parsedStart) : Date.now();
@@ -20,6 +46,7 @@ async function scheduleBatch({
     ? parsedDelay
     : Number(process.env.MIN_DELAY_BETWEEN_EMAILS_MS) || 2000;
 
+  const attachmentsJson = sanitizeAttachments(attachments);
   const created = [];
 
   for (let i = 0; i < recipients.length; i++) {
@@ -39,6 +66,7 @@ async function scheduleBatch({
       scheduled_at: new Date(targetMs),
       status: 'SCHEDULED',
       hourly_limit: hourlyLimit ? Number(hourlyLimit) : null,
+      attachments_json: attachmentsJson,
       idempotency_key: idempotencyKey,
     });
 

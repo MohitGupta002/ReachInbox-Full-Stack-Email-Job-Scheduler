@@ -113,6 +113,7 @@ This repository includes a complete [`render.yaml`](./render.yaml) targeting Ren
 1. Push this repository to GitHub (`email-job-scheduler`).
 2. In Render Dashboard, choose **New → Blueprint** and select the repo.
 3. Add your `GOOGLE_CLIENT_ID` & `GOOGLE_CLIENT_SECRET` (and whitelist `https://<your-api>.onrender.com/api/auth/google/callback` in Google Cloud Console) plus `FRONTEND_URL` matching your deployed Static Site URL.
+4. **Important for Render Free Tier Email Sending:** Render Free Tier blocks outbound SMTP ports (`25`, `465`, `587`), so use **1-Click Gmail OAuth (HTTPS port 443)** or **Resend HTTPS API** in **Settings** when hosted on Render's Free plan (SMTP App Password / Ethereal works locally and on paid plans).
 
 ---
 

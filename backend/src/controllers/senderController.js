@@ -1,7 +1,26 @@
 const Sender = require('../models/Sender');
 const { createEtherealAccount, createCustomSmtpSender } = require('../services/mailerService');
+const { getHourKey } = require('../services/rateLimitService');
+const { getIntValue, deleteKey } = require('../services/kvStoreService');
 
-// Get all senders for user, auto-creating a default test sender if none exists
+function formatSafeSender(sender, usedThisHour = 0) {
+  const limit = Number(sender.hourly_limit) || 200;
+  return {
+    id: sender.id,
+    user_id: sender.user_id,
+    email: sender.email,
+    display_name: sender.display_name,
+    smtp_host: sender.smtp_host,
+    smtp_port: sender.smtp_port,
+    hourly_limit: limit,
+    used_this_hour: usedThisHour,
+    remaining_this_hour: Math.max(0, limit - usedThisHour),
+    provider: sender.provider || 'ethereal',
+    created_at: sender.created_at,
+  };
+}
+
+// Get all senders for user with live hourly quota usage
 async function getSenders(req, res) {
   try {
     let senders = await Sender.findAll({
@@ -9,7 +28,6 @@ async function getSenders(req, res) {
       order: [['created_at', 'DESC']],
     });
 
-    // Auto-provision a default Ethereal sender on first access if none
     if (senders.length === 0) {
       const defaultSender = await createEtherealAccount(
         req.user.id,
@@ -19,18 +37,13 @@ async function getSenders(req, res) {
       senders = [defaultSender];
     }
 
-    // Never expose raw SMTP passwords to the frontend
-    const safeSenders = senders.map((s) => ({
-      id: s.id,
-      user_id: s.user_id,
-      email: s.email,
-      display_name: s.display_name,
-      smtp_host: s.smtp_host,
-      smtp_port: s.smtp_port,
-      hourly_limit: s.hourly_limit,
-      provider: s.provider || 'ethereal',
-      created_at: s.created_at,
-    }));
+    const hourKey = getHourKey();
+    const safeSenders = await Promise.all(
+      senders.map(async (s) => {
+        const used = await getIntValue(`ratelimit:${s.id}:${hourKey}`).catch(() => 0);
+        return formatSafeSender(s, used);
+      })
+    );
 
     res.json(safeSenders);
   } catch (err) {
@@ -49,23 +62,14 @@ async function createSender(req, res) {
       Number(hourlyLimit) || 200
     );
 
-    res.status(201).json({
-      id: sender.id,
-      user_id: sender.user_id,
-      email: sender.email,
-      display_name: sender.display_name,
-      smtp_host: sender.smtp_host,
-      smtp_port: sender.smtp_port,
-      hourly_limit: sender.hourly_limit,
-      provider: sender.provider,
-    });
+    res.status(201).json(formatSafeSender(sender, 0));
   } catch (err) {
     console.error('[Senders] Error creating sender:', err);
     res.status(500).json({ error: err.message });
   }
 }
 
-// Connect a real Gmail (App Password) or custom SMTP sender with live verification
+// Connect a real Gmail (App Password), custom SMTP, or Resend HTTPS API sender
 async function createSmtpSender(req, res) {
   try {
     const {
@@ -76,15 +80,16 @@ async function createSmtpSender(req, res) {
       smtpUser,
       smtpPass,
       appPassword,
+      apiKey,
       hourlyLimit,
       provider = 'gmail',
       skipVerify = false,
     } = req.body;
 
-    const effectivePass = appPassword || smtpPass;
-    if (!email || !effectivePass) {
+    const effectiveSecret = apiKey || appPassword || smtpPass;
+    if (!email || !effectiveSecret) {
       return res.status(400).json({
-        error: 'Email address and Gmail App Password (or SMTP password) are required.',
+        error: 'Email address and Gmail App Password / Resend API Key / SMTP password are required.',
       });
     }
 
@@ -95,28 +100,43 @@ async function createSmtpSender(req, res) {
       smtpHost: smtpHost || 'smtp.gmail.com',
       smtpPort: smtpPort || 465,
       smtpUser: smtpUser || email,
-      smtpPass: effectivePass,
+      smtpPass: effectiveSecret,
       hourlyLimit: Number(hourlyLimit) || 200,
       provider,
       skipVerify: Boolean(skipVerify),
     });
 
     res.status(201).json({
-      id: sender.id,
-      user_id: sender.user_id,
-      email: sender.email,
-      display_name: sender.display_name,
-      smtp_host: sender.smtp_host,
-      smtp_port: sender.smtp_port,
-      hourly_limit: sender.hourly_limit,
-      provider: sender.provider,
+      ...formatSafeSender(sender, 0),
       message: `Verified and connected ${sender.email} (${sender.smtp_host})`,
     });
   } catch (err) {
     console.error('[Senders] SMTP verification/creation failed:', err.message);
     res.status(400).json({
-      error: `SMTP authentication failed: ${err.message}. For Gmail, ensure 2-Step Verification is enabled and use a 16-character Google App Password.`,
+      error: `Authentication failed: ${err.message}`,
     });
+  }
+}
+
+// Reset current UTC hour rate-limit counter for testing
+async function resetRateLimit(req, res) {
+  try {
+    const sender = await Sender.findOne({
+      where: { id: req.params.id, user_id: req.user.id },
+    });
+    if (!sender) {
+      return res.status(404).json({ error: 'Sender not found' });
+    }
+
+    const hourKey = getHourKey();
+    await deleteKey(`ratelimit:${sender.id}:${hourKey}`);
+    await deleteKey(`slack:alerted:${sender.id}:${hourKey}`);
+
+    res.json({
+      message: `Cleared hourly rate-limit counter for ${sender.email} (window ${hourKey})`,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 }
 
@@ -142,5 +162,6 @@ module.exports = {
   getSenders,
   createSender,
   createSmtpSender,
+  resetRateLimit,
   deleteSender,
 };

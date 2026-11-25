@@ -28,6 +28,7 @@ async function ensureSqliteColumns() {
     { table: 'email_jobs', column: 'message_id', sqlType: 'VARCHAR(255)' },
     { table: 'email_jobs', column: 'hourly_limit', sqlType: 'INTEGER' },
     { table: 'email_jobs', column: 'retry_count', sqlType: 'INTEGER NOT NULL DEFAULT 0' },
+    { table: 'email_jobs', column: 'attachments_json', sqlType: 'TEXT' },
   ];
 
   for (const { table, column, sqlType } of columnChecks) {

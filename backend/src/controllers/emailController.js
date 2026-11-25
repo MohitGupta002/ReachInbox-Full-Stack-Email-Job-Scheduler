@@ -13,10 +13,32 @@ const SENDER_INCLUDE = [
   },
 ];
 
-// Schedule batch of emails
+function serializeJobForList(jobRow) {
+  const plain = typeof jobRow.toJSON === 'function' ? jobRow.toJSON() : { ...jobRow };
+  let attachmentsMeta = [];
+  if (plain.attachments_json) {
+    try {
+      const parsed = JSON.parse(plain.attachments_json);
+      if (Array.isArray(parsed)) {
+        attachmentsMeta = parsed.map((a) => ({
+          filename: a.filename,
+          contentType: a.contentType,
+          size: a.size,
+        }));
+      }
+    } catch (e) {
+      attachmentsMeta = [];
+    }
+  }
+  delete plain.attachments_json;
+  plain.attachments = attachmentsMeta;
+  return plain;
+}
+
+// Schedule batch of emails (with optional file attachments)
 async function schedule(req, res) {
   try {
-    const { senderId, recipients, subject, body, startTime, delayMs, hourlyLimit } = req.body;
+    const { senderId, recipients, subject, body, startTime, delayMs, hourlyLimit, attachments } = req.body;
 
     if (!senderId) {
       return res.status(400).json({ error: 'senderId is required' });
@@ -28,7 +50,6 @@ async function schedule(req, res) {
       return res.status(400).json({ error: 'subject is required' });
     }
 
-    // Verify sender belongs to user
     const sender = await Sender.findOne({
       where: { id: senderId, user_id: req.user.id },
     });
@@ -47,12 +68,13 @@ async function schedule(req, res) {
       startTime,
       delayMs,
       hourlyLimit: effectiveLimit,
+      attachments,
     });
 
     res.status(201).json({
       message: `Successfully scheduled ${createdJobs.length} email(s)`,
       count: createdJobs.length,
-      jobs: createdJobs,
+      jobs: createdJobs.map(serializeJobForList),
     });
   } catch (err) {
     console.error('[EmailController] Error scheduling batch:', err);
@@ -84,7 +106,7 @@ async function getScheduled(req, res) {
       total: count,
       page,
       totalPages: Math.max(1, Math.ceil(count / limit)),
-      emails: rows,
+      emails: rows.map(serializeJobForList),
     });
   } catch (err) {
     console.error('[EmailController] Error fetching scheduled:', err);
@@ -119,7 +141,7 @@ async function getSent(req, res) {
       total: count,
       page,
       totalPages: Math.max(1, Math.ceil(count / limit)),
-      emails: rows,
+      emails: rows.map(serializeJobForList),
     });
   } catch (err) {
     console.error('[EmailController] Error fetching sent:', err);
@@ -145,6 +167,7 @@ async function search(req, res) {
 
     res.json({
       ...results,
+      emails: (results.emails || []).map(serializeJobForList),
       page: parsedPage,
       totalPages: Math.max(1, Math.ceil((results.total || 0) / parsedLimit)),
     });
@@ -181,6 +204,34 @@ async function getStats(req, res) {
   }
 }
 
+async function enqueueRetryRecord(jobRow) {
+  await jobRow.update({
+    status: 'SCHEDULED',
+    scheduled_at: new Date(),
+    retry_count: 0,
+    error_message: null,
+  });
+  await updateEmailDoc(jobRow);
+
+  if (emailQueue) {
+    await emailQueue.add(
+      'send-email',
+      {
+        emailJobId: jobRow.id,
+        userId: jobRow.user_id,
+        senderId: jobRow.sender_id,
+        hourlyLimit: jobRow.hourly_limit,
+      },
+      {
+        jobId: `email-${jobRow.id}-retry-${Date.now()}`,
+        delay: 0,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+      }
+    );
+  }
+}
+
 // Retry a failed email job immediately
 async function retryJob(req, res) {
   try {
@@ -195,35 +246,44 @@ async function retryJob(req, res) {
       return res.status(400).json({ error: 'Email has already been sent' });
     }
 
-    await jobRow.update({
-      status: 'SCHEDULED',
-      scheduled_at: new Date(),
-      retry_count: 0,
-      error_message: null,
-    });
-    await updateEmailDoc(jobRow);
-
-    if (emailQueue) {
-      await emailQueue.add(
-        'send-email',
-        {
-          emailJobId: jobRow.id,
-          userId: jobRow.user_id,
-          senderId: jobRow.sender_id,
-          hourlyLimit: jobRow.hourly_limit,
-        },
-        {
-          jobId: `email-${jobRow.id}-retry-${Date.now()}`,
-          delay: 0,
-          attempts: 3,
-          backoff: { type: 'exponential', delay: 5000 },
-        }
-      );
-    }
-
-    res.json({ message: 'Email re-queued for immediate delivery', job: jobRow });
+    await enqueueRetryRecord(jobRow);
+    res.json({ message: 'Email re-queued for immediate delivery', job: serializeJobForList(jobRow) });
   } catch (err) {
     console.error('[EmailController] Retry failed:', err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// Retry all failed jobs for authenticated user
+async function retryAllFailed(req, res) {
+  try {
+    const failedJobs = await EmailJob.findAll({
+      where: { user_id: req.user.id, status: 'FAILED' },
+    });
+
+    for (const jobRow of failedJobs) {
+      await enqueueRetryRecord(jobRow);
+    }
+
+    res.json({ message: `Re-queued ${failedJobs.length} failed job(s)`, count: failedJobs.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// Delete a non-sent / failed job record
+async function deleteJob(req, res) {
+  try {
+    const deleted = await EmailJob.destroy({
+      where: { id: req.params.id, user_id: req.user.id },
+    });
+
+    if (!deleted) {
+      return res.status(404).json({ error: 'Email job not found' });
+    }
+
+    res.json({ message: 'Email job removed' });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 }
@@ -235,4 +295,6 @@ module.exports = {
   search,
   getStats,
   retryJob,
+  retryAllFailed,
+  deleteJob,
 };

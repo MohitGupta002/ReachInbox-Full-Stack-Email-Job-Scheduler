@@ -6,7 +6,7 @@ import EfficiencyCard from '../components/EfficiencyCard';
 import EmailTable from '../components/EmailTable';
 import ComposeModal from '../components/ComposeModal';
 import SlackModal from '../components/SlackModal';
-import api from '../services/api';
+import api, { API_ORIGIN } from '../services/api';
 import toast from 'react-hot-toast';
 import {
   Mail,
@@ -20,6 +20,8 @@ import {
   Slack,
   Sparkles,
   Server,
+  RotateCcw,
+  ShieldCheck,
 } from 'lucide-react';
 
 export default function DashboardPage() {
@@ -31,9 +33,12 @@ export default function DashboardPage() {
   const [stats, setStats] = useState(null);
   const [healthInfo, setHealthInfo] = useState(null);
   const [senders, setSenders] = useState([]);
+  const [failedJobs, setFailedJobs] = useState([]);
+  const [rateLimitedJobs, setRateLimitedJobs] = useState([]);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-  // Settings Gmail SMTP form
+  // Settings provider toggle & form ('gmail' SMTP App Password | 'resend' HTTPS API)
+  const [providerMode, setProviderMode] = useState('gmail');
   const [gmailEmail, setGmailEmail] = useState('');
   const [gmailAppPass, setGmailAppPass] = useState('');
   const [gmailDisplayName, setGmailDisplayName] = useState('');
@@ -55,6 +60,10 @@ export default function DashboardPage() {
       window.history.replaceState({}, document.title, window.location.pathname);
     } else if (params.get('slack_modal') === 'manual') {
       setIsSlackOpen(true);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (params.get('gmail_oauth') === 'connected') {
+      toast.success('Gmail OAuth sending authorized over HTTPS! Select [GMAIL_OAUTH] in Compose.');
+      setActiveNav('settings');
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, []);
@@ -106,11 +115,25 @@ export default function DashboardPage() {
     }
   };
 
+  const fetchAlertDetails = async () => {
+    try {
+      const [failedRes, delayedRes] = await Promise.all([
+        api.get('/emails/search', { params: { status: 'FAILED', limit: 25 } }),
+        api.get('/emails/search', { params: { status: 'DELAYED_RATE_LIMIT', limit: 25 } }),
+      ]);
+      setFailedJobs(failedRes.data.emails || []);
+      setRateLimitedJobs(delayedRes.data.emails || []);
+    } catch (err) {
+      console.warn('Could not fetch alert details:', err.message);
+    }
+  };
+
   useEffect(() => {
     fetchSlackStatus();
     fetchStats();
     fetchHealth();
     fetchSendersList();
+    fetchAlertDetails();
   }, [refreshTrigger]);
 
   useEffect(() => {
@@ -129,24 +152,65 @@ export default function DashboardPage() {
     e.preventDefault();
     try {
       setSavingGmail(true);
+      const isResend = providerMode === 'resend';
       const res = await api.post('/senders/smtp', {
         email: gmailEmail,
         displayName: gmailDisplayName || gmailEmail,
-        smtpHost: 'smtp.gmail.com',
+        smtpHost: isResend ? 'api.resend.com' : 'smtp.gmail.com',
         smtpPort: 465,
-        appPassword: gmailAppPass,
+        ...(isResend ? { apiKey: gmailAppPass } : { appPassword: gmailAppPass }),
         hourlyLimit: Number(gmailHourlyLimit) || 200,
-        provider: 'gmail',
+        provider: isResend ? 'resend' : 'gmail',
       });
-      toast.success(res.data.message || 'Gmail SMTP sender connected!');
+      toast.success(res.data.message || 'Sender verified and connected!');
       setGmailEmail('');
       setGmailAppPass('');
       setGmailDisplayName('');
       setRefreshTrigger((prev) => prev + 1);
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Could not verify Gmail SMTP');
+      toast.error(err.response?.data?.error || 'Could not verify sender credentials');
     } finally {
       setSavingGmail(false);
+    }
+  };
+
+  const handleResetSenderLimit = async (senderId) => {
+    try {
+      const res = await api.post(`/senders/${senderId}/reset-limit`);
+      toast.success(res.data.message || 'Hourly quota counter reset');
+      setRefreshTrigger((prev) => prev + 1);
+    } catch (err) {
+      toast.error('Failed to reset rate counter');
+    }
+  };
+
+  const handleRetrySingleJob = async (jobId) => {
+    try {
+      await api.post(`/emails/${jobId}/retry`);
+      toast.success('Re-queued for immediate delivery');
+      setRefreshTrigger((prev) => prev + 1);
+    } catch (err) {
+      toast.error('Retry failed');
+    }
+  };
+
+  const handleRetryAllFailed = async () => {
+    try {
+      const res = await api.post('/emails/retry-all-failed');
+      toast.success(res.data.message || 'Retrying all failed jobs');
+      setRefreshTrigger((prev) => prev + 1);
+    } catch (err) {
+      toast.error('Failed to retry jobs');
+    }
+  };
+
+  const handleDeleteJob = async (jobId) => {
+    try {
+      await api.delete(`/emails/${jobId}`);
+      toast.success('Removed email record');
+      setRefreshTrigger((prev) => prev + 1);
+    } catch (err) {
+      toast.error('Failed to remove record');
     }
   };
 
@@ -346,18 +410,29 @@ export default function DashboardPage() {
 
           {activeNav === 'notifications' && (
             <div className="bg-white rounded-3xl p-7 border border-slate-100 shadow-sm space-y-5">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="text-lg font-bold text-slate-900">System & Rate-Limit Notifications</h2>
-                  <p className="text-xs text-slate-500">Live telemetry for queue recovery, rate-limit rescheduling, and Slack webhooks</p>
+                  <p className="text-xs text-slate-500">Live failure diagnostics, deferred overflow jobs, and hourly sender quota meters</p>
                 </div>
-                <button
-                  onClick={() => setIsSlackOpen(true)}
-                  className="px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-semibold flex items-center gap-2"
-                >
-                  <Slack className="w-3.5 h-3.5" />
-                  <span>{slackStatus?.connected ? 'Manage Slack' : 'Connect Slack'}</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  {failedJobs.length > 0 && (
+                    <button
+                      onClick={handleRetryAllFailed}
+                      className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold flex items-center gap-1.5"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Retry All Failed ({failedJobs.length})</span>
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setIsSlackOpen(true)}
+                    className="px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-semibold flex items-center gap-2"
+                  >
+                    <Slack className="w-3.5 h-3.5" />
+                    <span>{slackStatus?.connected ? 'Manage Slack' : 'Connect Slack'}</span>
+                  </button>
+                </div>
               </div>
 
               <div className="space-y-3">
@@ -369,71 +444,163 @@ export default function DashboardPage() {
                         Engine Mode: {healthInfo?.infrastructure?.redisMode === 'redis_bullmq' ? 'Redis + BullMQ Live' : 'Standalone SQLite Persistent Fallback'}
                       </p>
                       <p className="text-[11px] text-slate-500">
-                        Database: {healthInfo?.infrastructure?.databaseDialect || 'sqlite'} | Startup reconciliation verified
+                        Database: {healthInfo?.infrastructure?.databaseDialect || 'sqlite'} | {stats?.rateLimited || 0} rate-limited deferred & {stats?.failed || 0} failed
                       </p>
                     </div>
                   </div>
                   <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full">Active</span>
                 </div>
 
-                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <AlertTriangle className="w-4 h-4 text-amber-500" />
+                {/* Live Sender Quotas */}
+                {senders.map((s) => (
+                  <div key={s.id} className="p-4 rounded-2xl bg-blue-50/40 border border-blue-100 flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <p className="text-xs font-bold text-slate-800">
-                        {stats?.rateLimited || 0} rate-limited job(s) currently staggered & {stats?.failed || 0} failed job(s)
+                        Quota [{(s.provider || 'ethereal').toUpperCase()}]: {s.email}
                       </p>
-                      <p className="text-[11px] text-slate-500">
-                        Slack Deduplication Lock: 1 alert / sender / UTC hour (`SET NX EX 3600`)
+                      <p className="text-[11px] text-slate-600">
+                        Used this UTC hour: <strong>{s.used_this_hour ?? 0}</strong> / {s.hourly_limit} ({s.remaining_this_hour ?? s.hourly_limit} remaining)
                       </p>
                     </div>
+                    {(s.used_this_hour || 0) > 0 && (
+                      <button
+                        onClick={() => handleResetSenderLimit(s.id)}
+                        className="px-3 py-1.5 rounded-xl bg-white hover:bg-slate-50 text-blue-600 border border-blue-200 text-xs font-semibold"
+                      >
+                        Reset Hour Counter
+                      </button>
+                    )}
                   </div>
-                  <button
-                    onClick={() => setActiveNav('insights')}
-                    className="text-xs font-semibold text-blue-600 hover:underline"
-                  >
-                    Inspect Queue
-                  </button>
-                </div>
+                ))}
+
+                {/* Failed Jobs Details */}
+                {failedJobs.map((job) => (
+                  <div key={job.id} className="p-4 rounded-2xl bg-rose-50/70 border border-rose-200 flex flex-wrap items-center justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-bold text-rose-900 truncate">
+                        FAILED: {job.recipient_email} — {job.subject}
+                      </p>
+                      <p className="text-[11px] text-rose-700 mt-0.5 break-all">
+                        Reason: {job.error_message || 'Unknown transport error'}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={() => handleRetrySingleJob(job.id)}
+                        className="px-3 py-1.5 rounded-xl bg-white hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold flex items-center gap-1"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        <span>Retry</span>
+                      </button>
+                      <button
+                        onClick={() => handleDeleteJob(job.id)}
+                        className="p-1.5 rounded-xl text-rose-500 hover:bg-rose-100"
+                        title="Dismiss"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+
+                {/* Rate-Limited Jobs Details */}
+                {rateLimitedJobs.map((job) => (
+                  <div key={job.id} className="p-4 rounded-2xl bg-amber-50/70 border border-amber-200 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-bold text-amber-900">
+                        RATE LIMITED (DEFERRED): {job.recipient_email} — {job.subject}
+                      </p>
+                      <p className="text-[11px] text-amber-700 mt-0.5">
+                        Rescheduled cleanly for next UTC hour window: {new Date(job.scheduled_at).toLocaleString()}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => handleDeleteJob(job.id)}
+                      className="text-xs font-semibold text-amber-800 hover:underline"
+                    >
+                      Cancel Job
+                    </button>
+                  </div>
+                ))}
               </div>
             </div>
           )}
 
           {activeNav === 'settings' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-7">
-              {/* Connect Real Gmail SMTP Card */}
+              {/* Connect Real Gmail / Resend Sender Card */}
               <div className="bg-white rounded-3xl p-7 border border-slate-100 shadow-sm space-y-5">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
                     <KeyRound className="w-5 h-5" />
                   </div>
                   <div>
-                    <h2 className="text-lg font-bold text-slate-900">Connect Real Gmail Sender</h2>
+                    <h2 className="text-lg font-bold text-slate-900">Connect Real Email Sender</h2>
                     <p className="text-xs text-slate-500">
-                      Send real scheduled emails via `smtp.gmail.com` using a 16-char Google App Password.
+                      For Render Free Tier (which blocks SMTP ports 465/587), use Gmail OAuth HTTPS or Resend HTTPS API.
                     </p>
                   </div>
                 </div>
 
+                {/* Option 1: 1-Click Gmail OAuth HTTPS (No App Password & Works on Render!) */}
+                <div className="p-4 rounded-2xl bg-indigo-50/70 border border-indigo-200/80 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-indigo-950">Option 1: 1-Click Gmail OAuth (HTTPS 443)</span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-600 text-white">Render Compatible</span>
+                  </div>
+                  <p className="text-[11px] text-indigo-800">
+                    Sends directly via Gmail REST API over HTTPS without an App Password (ensure Gmail API is enabled in Google Cloud Console).
+                  </p>
+                  <a
+                    href={`${API_ORIGIN}/api/auth/google/gmail`}
+                    className="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center justify-center gap-2 transition-colors"
+                  >
+                    <ShieldCheck className="w-4 h-4" />
+                    <span>Authorize Gmail Sending via Google OAuth</span>
+                  </a>
+                </div>
+
+                {/* Option 2 / 3 Toggle: Gmail App Password SMTP or Resend HTTPS API */}
+                <div className="flex p-1 bg-slate-100 rounded-xl">
+                  <button
+                    type="button"
+                    onClick={() => setProviderMode('gmail')}
+                    className={`flex-1 py-1.5 rounded-lg text-xs font-bold ${providerMode === 'gmail' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
+                  >
+                    Gmail App Password (SMTP)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setProviderMode('resend')}
+                    className={`flex-1 py-1.5 rounded-lg text-xs font-bold ${providerMode === 'resend' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
+                  >
+                    Resend API (Render HTTPS)
+                  </button>
+                </div>
+
                 <form onSubmit={handleAddGmailSender} className="space-y-3.5">
                   <div>
-                    <label className="text-xs font-bold text-slate-700 uppercase block mb-1">Gmail Address</label>
+                    <label className="text-xs font-bold text-slate-700 uppercase block mb-1">
+                      {providerMode === 'resend' ? 'Verified From Email' : 'Gmail Address'}
+                    </label>
                     <input
                       type="email"
                       value={gmailEmail}
                       onChange={(e) => setGmailEmail(e.target.value)}
-                      placeholder="you@gmail.com"
+                      placeholder={providerMode === 'resend' ? 'onboarding@resend.dev or you@yourdomain.com' : 'you@gmail.com'}
                       className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs focus:outline-none focus:border-blue-500"
                       required
                     />
                   </div>
                   <div>
-                    <label className="text-xs font-bold text-slate-700 uppercase block mb-1">Google App Password</label>
+                    <label className="text-xs font-bold text-slate-700 uppercase block mb-1">
+                      {providerMode === 'resend' ? 'Resend API Key' : 'Google App Password'}
+                    </label>
                     <input
                       type="password"
                       value={gmailAppPass}
                       onChange={(e) => setGmailAppPass(e.target.value)}
-                      placeholder="xxxx xxxx xxxx xxxx"
+                      placeholder={providerMode === 'resend' ? 're_xxxxxxxxx...' : 'xxxx xxxx xxxx xxxx'}
                       className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs focus:outline-none focus:border-blue-500"
                       required
                     />
@@ -465,7 +632,11 @@ export default function DashboardPage() {
                     disabled={savingGmail}
                     className="w-full py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-md transition-colors"
                   >
-                    {savingGmail ? 'Verifying SMTP Connection...' : 'Verify & Connect Gmail Sender'}
+                    {savingGmail
+                      ? 'Verifying Connection...'
+                      : providerMode === 'resend'
+                      ? 'Save Resend HTTPS Sender'
+                      : 'Verify & Connect Gmail SMTP Sender'}
                   </button>
                 </form>
               </div>
@@ -475,7 +646,7 @@ export default function DashboardPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <h2 className="text-lg font-bold text-slate-900">Configured Senders ({senders.length})</h2>
-                    <p className="text-xs text-slate-500">Multi-sender pool with independent hourly rate limits</p>
+                    <p className="text-xs text-slate-500">Multi-sender pool with live UTC hourly quota usage</p>
                   </div>
                   <button
                     onClick={handleAddEtherealSender}
@@ -486,7 +657,7 @@ export default function DashboardPage() {
                   </button>
                 </div>
 
-                <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+                <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
                   {senders.map((s) => (
                     <div
                       key={s.id}
@@ -501,18 +672,28 @@ export default function DashboardPage() {
                           </span>
                         </div>
                         <p className="text-[11px] text-slate-500 mt-0.5">
-                          {s.smtp_host}:{s.smtp_port} • Limit: {s.hourly_limit}/hr
+                          {s.smtp_host}:{s.smtp_port} • Used: <strong>{s.used_this_hour ?? 0}</strong>/{s.hourly_limit} hr
                         </p>
                       </div>
-                      {senders.length > 1 && (
-                        <button
-                          onClick={() => handleDeleteSender(s.id)}
-                          title="Delete Sender"
-                          className="p-2 rounded-xl text-rose-500 hover:bg-rose-50 transition-colors shrink-0"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {(s.used_this_hour || 0) > 0 && (
+                          <button
+                            onClick={() => handleResetSenderLimit(s.id)}
+                            className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-[11px] font-semibold text-blue-600 hover:bg-blue-50"
+                          >
+                            Reset Quota
+                          </button>
+                        )}
+                        {senders.length > 1 && (
+                          <button
+                            onClick={() => handleDeleteSender(s.id)}
+                            title="Delete Sender"
+                            className="p-2 rounded-xl text-rose-500 hover:bg-rose-50 transition-colors"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>

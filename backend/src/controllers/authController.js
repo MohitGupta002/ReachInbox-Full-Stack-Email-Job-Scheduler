@@ -34,7 +34,8 @@ async function googleCallback(req, res) {
 
     const token = signToken(req.user.id);
     setCookie(res, token);
-    res.redirect(`${FRONTEND_URL}/`);
+    const suffix = req.query.state === 'connect_gmail' ? '?gmail_oauth=connected' : '';
+    res.redirect(`${FRONTEND_URL}/${suffix}`);
   } catch (err) {
     console.error('[Auth] Callback error:', err);
     res.redirect(`${FRONTEND_URL}/?error=server_error`);

@@ -15,7 +15,7 @@ export default function Sidebar({ activeTab, setActiveTab, alertCount = 0 }) {
     { id: 'overview', label: 'Overview', icon: Home },
     { id: 'assistant', label: 'AI Assistant', icon: Bot },
     { id: 'insights', label: 'Insights', icon: BarChart2 },
-    { id: 'notifications', label: 'Notifications', icon: Bell, badge: alertCount > 0 ? alertCount : 2 },
+    { id: 'notifications', label: 'Notifications', icon: Bell, badge: alertCount > 0 ? alertCount : undefined },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
 
